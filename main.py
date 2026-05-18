@@ -31,9 +31,6 @@ from src.backtest import run_mv_backtest
 from src.benchmark import run_vw_backtest
 
 
-# Small helpers used by both parts.
-# They keep the main pipeline readable without hiding the logic.
-
 def build_covariance_by_year(
     returns_matrix,
     universe_by_year,
@@ -80,12 +77,14 @@ def build_part2_static_inputs(
     for year in rebalance_years:
         universe = universe_by_year[year]
         end_prev = pd.Timestamp(f"{year - 1}-12-31")
+
         cf_per_unit_by_year[year] = compute_cf_per_unit(
             carbon_data,
             annual_caps_data,
             universe,
             end_prev,
         )
+
         vw_weights_by_year[year] = _get_vw_weights(
             market_caps_data,
             universe,
@@ -143,16 +142,19 @@ def run_part2_pipeline(
         prepare_risk_free_rate,
     )
 
-    # Part II starts by adding the annual data needed for carbon metrics.
+    # ------------------------------------------------------------------
+    # Load and prepare annual carbon inputs
+    # ------------------------------------------------------------------
+
     revenue_raw = pd.read_excel(paths["DATA_RAW"] / "DS_REV_Y_2025.xlsx")
     annual_caps_raw = pd.read_excel(paths["DATA_RAW"] / "DS_MV_T_USD_Y_2025.xlsx")
     risk_free_raw = pd.read_excel(paths["DATA_RAW"] / "Risk_Free_Rate_2025.xlsx")
     risk_free_rate = prepare_risk_free_rate(risk_free_raw)
 
-    # Put revenue, annual market caps and carbon data in the same format.
     revenue_data = prepare_revenue_data(revenue_raw, em_isins)
     annual_caps_data = prepare_annual_market_caps(annual_caps_raw, em_isins)
     carbon_intensity = compute_carbon_intensity(carbon_data, revenue_data)
+
     cf_per_unit_by_year, vw_weights_by_year = build_part2_static_inputs(
         market_caps_data=market_caps_data,
         carbon_data=carbon_data,
@@ -160,9 +162,13 @@ def run_part2_pipeline(
         universe_by_year=universe_by_year,
         rebalance_years=rebalance_years,
     )
+
     print("Part II carbon inputs prepared.", flush=True)
 
-    # First measure the carbon profile of the two baseline portfolios.
+    # ------------------------------------------------------------------
+    # Baseline carbon metrics: MV and VW
+    # ------------------------------------------------------------------
+
     mv_waci_series, mv_cf_series = compute_carbon_metrics_timeseries(
         weights_by_year=mv_weights_by_year,
         universe_by_year=universe_by_year,
@@ -181,7 +187,10 @@ def run_part2_pipeline(
         rebalance_years=rebalance_years,
     )
 
-    # Section 3.2: minimum-variance portfolio with a 50% CF target.
+    # ------------------------------------------------------------------
+    # Section 3.2: MV portfolio with 50% carbon-footprint reduction
+    # ------------------------------------------------------------------
+
     carbon_mv_weights = compute_carbon_mv_weights_by_year(
         returns_matrix=returns_matrix,
         universe_by_year=universe_by_year,
@@ -194,6 +203,7 @@ def run_part2_pipeline(
         covariance_by_year=covariance_by_year,
         cf_per_unit_by_year=cf_per_unit_by_year,
     )
+
     _, carbon_mv_returns = run_portfolio_backtest(
         returns_matrix,
         carbon_mv_weights,
@@ -209,13 +219,18 @@ def run_part2_pipeline(
         carbon_intensity,
         rebalance_years,
     )
+
     print("Section 3.2 completed.", flush=True)
 
-    # Section 3.3: stay close to VW while cutting carbon footprint by 50%.
+    # ------------------------------------------------------------------
+    # Section 3.3: tracking-error portfolio with 50% carbon reduction
+    # ------------------------------------------------------------------
+
     cf_target_50_vw = {
         year: CARBON_REDUCTION_TARGET * vw_cf_series.loc[year]
         for year in rebalance_years
     }
+
     te_50_weights = compute_te_min_weights_by_year(
         returns_matrix=returns_matrix,
         market_caps_data=market_caps_data,
@@ -229,6 +244,7 @@ def run_part2_pipeline(
         cf_per_unit_by_year=cf_per_unit_by_year,
         vw_weights_by_year=vw_weights_by_year,
     )
+
     _, te_50_returns = run_portfolio_backtest(
         returns_matrix,
         te_50_weights,
@@ -244,12 +260,23 @@ def run_part2_pipeline(
         carbon_intensity,
         rebalance_years,
     )
+
     print("Section 3.3 completed.", flush=True)
 
-    # Section 4: net-zero path, with a 10% carbon-footprint reduction each year.
+    # ------------------------------------------------------------------
+    # Section 4: net-zero path with 10% yearly reduction
+    # ------------------------------------------------------------------
+
     base_year_date = pd.Timestamp(f"{NET_ZERO_BASE_YEAR}-12-31")
     base_universe = universe_by_year[BACKTEST_START_YEAR]
-    vw_cf_base = compute_vw_cf(carbon_data, annual_caps_data, base_universe, base_year_date)
+
+    vw_cf_base = compute_vw_cf(
+        carbon_data,
+        annual_caps_data,
+        base_universe,
+        base_year_date,
+    )
+
     cf_target_nz = {
         year: (1 - NET_ZERO_REDUCTION) ** (year - NET_ZERO_BASE_YEAR) * vw_cf_base
         for year in rebalance_years
@@ -268,6 +295,7 @@ def run_part2_pipeline(
         cf_per_unit_by_year=cf_per_unit_by_year,
         vw_weights_by_year=vw_weights_by_year,
     )
+
     _, nz_returns = run_portfolio_backtest(
         returns_matrix,
         nz_weights,
@@ -283,9 +311,13 @@ def run_part2_pipeline(
         carbon_intensity,
         rebalance_years,
     )
+
     print("Section 4 completed.", flush=True)
 
-    # Gather everything before building the final tables and plots.
+    # ------------------------------------------------------------------
+    # Collect final return and carbon series
+    # ------------------------------------------------------------------
+
     all_returns = {
         "MV": mv_returns_oos,
         "MV (0.5)": carbon_mv_returns,
@@ -293,6 +325,7 @@ def run_part2_pipeline(
         "VW (0.5)": te_50_returns,
         "VW (NZ)": nz_returns,
     }
+
     waci_all = {
         "MV": mv_waci_series,
         "MV (0.5)": cmv_waci,
@@ -300,6 +333,7 @@ def run_part2_pipeline(
         "VW (0.5)": te50_waci,
         "VW (NZ)": nz_waci,
     }
+
     cf_all = {
         "MV": mv_cf_series,
         "MV (0.5)": cmv_cf,
@@ -308,34 +342,158 @@ def run_part2_pipeline(
         "VW (NZ)": nz_cf,
     }
 
-    # Final Part II outputs.
     perf_summary = build_part2_performance_table(
         all_returns,
         risk_free_rate=risk_free_rate,
     )
+
     carbon_summary = build_carbon_metrics_table(waci_all, cf_all)
 
-    plot_part2_cumulative_performance(
-        compute_cumulative_returns(all_returns),
+    # ------------------------------------------------------------------
+    # Figures used in the final report
+    # ------------------------------------------------------------------
+
+    # Baseline carbon metrics: MV vs VW
+    plot_carbon_metrics(
+        {"MV": mv_waci_series, "VW": vw_waci_series},
+        ylabel="WACI (tCO2 / M$ revenue)",
+        title="Weighted Average Carbon Intensity -- MV vs VW",
         figures_dir=paths["FIGURES_DIR"],
-        filename="cumulative_section4.png",
-        title="Cumulative Returns: MV, MV(0.5), VW, VW(0.5), VW(NZ)",
+        filename="waci_mv_vw.png",
         show_plot=False,
     )
+
     plot_carbon_metrics(
-        cf_all,
+        {"MV": mv_cf_series, "VW": vw_cf_series},
         ylabel="CF (tCO2 / M$ invested)",
-        title="Carbon Footprint: All Part II Portfolios",
+        title="Carbon Footprint: MV vs VW",
+        figures_dir=paths["FIGURES_DIR"],
+        filename="cf_mv_vw.png",
+        show_plot=False,
+    )
+
+    # Section 3.2: MV vs MV(0.5)
+    plot_part2_cumulative_performance(
+        compute_cumulative_returns(
+            {
+                "MV": mv_returns_oos,
+                "MV (0.5)": carbon_mv_returns,
+            }
+        ),
+        figures_dir=paths["FIGURES_DIR"],
+        filename="cumulative_section32.png",
+        title="Cumulative Returns: MV vs MV(0.5)",
+        show_plot=False,
+    )
+
+    plot_carbon_metrics(
+        {"MV": mv_cf_series, "MV (0.5)": cmv_cf},
+        ylabel="CF (tCO2 / M$ invested)",
+        title="Carbon Footprint: MV vs MV(0.5)",
+        figures_dir=paths["FIGURES_DIR"],
+        filename="cf_section32.png",
+        show_plot=False,
+    )
+
+    # Section 3.3: VW vs VW(0.5)
+    plot_part2_cumulative_performance(
+        compute_cumulative_returns(
+            {
+                "VW": vw_returns_oos,
+                "VW (0.5)": te_50_returns,
+            }
+        ),
+        figures_dir=paths["FIGURES_DIR"],
+        filename="cumulative_section33.png",
+        title="Cumulative Returns: VW vs VW(0.5)",
+        show_plot=False,
+    )
+
+    plot_carbon_metrics(
+        {"VW": vw_cf_series, "VW (0.5)": te50_cf},
+        ylabel="CF (tCO2 / M$ invested)",
+        title="Carbon Footprint: VW vs VW(0.5)",
+        figures_dir=paths["FIGURES_DIR"],
+        filename="cf_section33.png",
+        show_plot=False,
+    )
+
+    # Section 3.4: comparison of 50% reduction portfolios
+    plot_part2_cumulative_performance(
+        compute_cumulative_returns(
+            {
+                "MV": mv_returns_oos,
+                "MV (0.5)": carbon_mv_returns,
+                "VW": vw_returns_oos,
+                "VW (0.5)": te_50_returns,
+            }
+        ),
+        figures_dir=paths["FIGURES_DIR"],
+        filename="cumulative_section34.png",
+        title="Cumulative Returns: MV, MV(0.5), VW, VW(0.5)",
+        show_plot=False,
+    )
+
+    plot_carbon_metrics(
+        {
+            "MV": mv_cf_series,
+            "MV (0.5)": cmv_cf,
+            "VW": vw_cf_series,
+            "VW (0.5)": te50_cf,
+        },
+        ylabel="CF (tCO2 / M$ invested)",
+        title="Carbon Footprint: All Portfolios (Section 3.4)",
+        figures_dir=paths["FIGURES_DIR"],
+        filename="cf_section34.png",
+        show_plot=False,
+    )
+
+    # Section 4: VW, VW(0.5), VW(NZ)
+    # These match the final report Figures 10 and 11.
+    plot_part2_cumulative_performance(
+        compute_cumulative_returns(
+            {
+                "VW": vw_returns_oos,
+                "VW (0.5)": te_50_returns,
+                "VW (NZ)": nz_returns,
+            }
+        ),
+        figures_dir=paths["FIGURES_DIR"],
+        filename="cumulative_section4.png",
+        title="Cumulative Returns: VW, VW(0.5), VW(NZ)",
+        show_plot=False,
+    )
+
+    plot_carbon_metrics(
+        {
+            "VW": vw_cf_series,
+            "VW (0.5)": te50_cf,
+            "VW (NZ)": nz_cf,
+        },
+        ylabel="CF (tCO2 / M$ invested)",
+        title="Carbon Footprint: VW, VW(0.5) and VW(NZ)",
         figures_dir=paths["FIGURES_DIR"],
         filename="cf_section4.png",
         show_plot=False,
     )
 
-    exported_paths = export_part2_outputs(all_returns, waci_all, cf_all, paths["TABLES_DIR"])
+    # ------------------------------------------------------------------
+    # Tables and Excel exports
+    # ------------------------------------------------------------------
+
+    exported_paths = export_part2_outputs(
+        all_returns,
+        waci_all,
+        cf_all,
+        paths["TABLES_DIR"],
+    )
+
     perf_path = paths["TABLES_DIR"] / "performance_summary_part2.csv"
     carbon_path = paths["TABLES_DIR"] / "carbon_metrics_summary_part2.csv"
+
     perf_summary.to_csv(perf_path)
     carbon_summary.to_csv(carbon_path)
+
     table_png_paths = export_part2_table_pngs(
         performance_summary=perf_summary,
         carbon_summary=carbon_summary,
@@ -343,6 +501,7 @@ def run_part2_pipeline(
         cf_by_year=pd.DataFrame(cf_all),
         figures_dir=paths["FIGURES_DIR"],
     )
+
     part2_excel_path = export_part2_excel_workbook(
         returns_dict=all_returns,
         performance_summary=perf_summary,
@@ -355,12 +514,16 @@ def run_part2_pipeline(
 
     print("Part II pipeline completed successfully.")
     print("Part II exported files:")
+
     for name, path in exported_paths.items():
         print(f"  {name}: {path}")
+
     print("  performance_summary_part2:", perf_path)
     print("  carbon_metrics_summary_part2:", carbon_path)
+
     for name, path in table_png_paths.items():
         print(f"  {name}: {path}")
+
     print("  Part II Excel workbook:", part2_excel_path)
 
     return {
@@ -382,37 +545,58 @@ def main():
     print("Launching SAAM pipeline...", flush=True)
     print("Starting Part I pipeline...", flush=True)
 
-    # Locate the project folders and create output folders if needed.
+    # ------------------------------------------------------------------
+    # Project paths
+    # ------------------------------------------------------------------
+
     paths = get_project_paths()
     ensure_project_directories(paths)
+
     matplotlib_cache = paths["INTERMEDIATE_DIR"] / "matplotlib"
     matplotlib_cache.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache))
+
     print("Project paths ready.", flush=True)
 
-    # Load the original Excel files used in Part I.
-    static, prices_raw, market_caps_raw, carbon_raw = load_raw_datasets(paths["DATA_RAW"])
+    # ------------------------------------------------------------------
+    # Load raw data
+    # ------------------------------------------------------------------
+
+    static, prices_raw, market_caps_raw, carbon_raw = load_raw_datasets(
+        paths["DATA_RAW"]
+    )
+
     print("Raw datasets loaded.", flush=True)
 
     # Group N works on Emerging Markets firms.
     em_firms = static[static["Region"] == REGION].copy()
     em_isins = em_firms["ISIN"].tolist()
 
-    # Clean prices, market caps and Scope 1 carbon data for the same firms.
+    # ------------------------------------------------------------------
+    # Clean and align data
+    # ------------------------------------------------------------------
+
     price_data = prepare_price_data(prices_raw, em_isins)
     price_data = apply_low_price_filter(price_data, LOW_PRICE_THRESHOLD)
 
     market_caps_data = prepare_market_caps_data(market_caps_raw, em_isins)
     carbon_data = prepare_carbon_data(carbon_raw, em_isins)
+
     print("Datasets cleaned and aligned.", flush=True)
 
-    # Convert total return indexes into simple monthly returns.
+    # ------------------------------------------------------------------
+    # Returns and delisting treatment
+    # ------------------------------------------------------------------
+
     returns_matrix = compute_returns(price_data)
     returns_matrix = apply_delisting_returns(price_data, returns_matrix)
+
     print("Returns matrix computed.", flush=True)
 
-    # Build the investment universe year by year.
-    # A firm only enters if the data available at that date is good enough.
+    # ------------------------------------------------------------------
+    # Dynamic universe
+    # ------------------------------------------------------------------
+
     rebalance_years = list(range(2014, 2026))
 
     universe_by_year = build_universe_by_year(
@@ -424,18 +608,26 @@ def main():
         min_history_months=MIN_HISTORY_MONTHS,
         stale_return_threshold=STALE_RETURN_THRESHOLD,
     )
+
     print("Dynamic universe built.", flush=True)
 
-    # Estimate one covariance matrix for each annual rebalance.
+    # ------------------------------------------------------------------
+    # Rolling covariance matrices
+    # ------------------------------------------------------------------
+
     covariance_by_year = build_covariance_by_year(
         returns_matrix=returns_matrix,
         universe_by_year=universe_by_year,
         rebalance_years=rebalance_years,
         rolling_window_months=ROLLING_WINDOW_MONTHS,
     )
+
     print("Rolling covariance matrices built.", flush=True)
 
-    # Compute the long-only minimum-variance weights.
+    # ------------------------------------------------------------------
+    # Part I portfolios
+    # ------------------------------------------------------------------
+
     mv_weights_by_year = compute_mv_weights_by_year(
         returns_matrix=returns_matrix,
         universe_by_year=universe_by_year,
@@ -444,7 +636,6 @@ def main():
         covariance_by_year=covariance_by_year,
     )
 
-    # Backtest the minimum-variance portfolio and the value-weighted benchmark.
     mv_returns_by_year, mv_returns_oos = run_mv_backtest(
         returns_matrix=returns_matrix,
         mv_weights_by_year=mv_weights_by_year,
@@ -457,11 +648,15 @@ def main():
         universe_by_year=universe_by_year,
         rebalance_years=rebalance_years,
     )
+
     print("Backtests completed.", flush=True)
 
-    # Build the Part I tables, figures and Excel template.
-    # Sharpe uses the risk-free rate: annualized(Rp - Rf) / annualized volatility.
+    # ------------------------------------------------------------------
+    # Part I reporting
+    # ------------------------------------------------------------------
+
     print("Loading reporting module...", flush=True)
+
     from src.reporting import (
         build_performance_table,
         compute_cumulative_series,
@@ -470,6 +665,7 @@ def main():
         fill_part1_excel_template,
         prepare_risk_free_rate as prepare_part1_risk_free_rate,
     )
+
     risk_free_raw = pd.read_excel(paths["DATA_RAW"] / "Risk_Free_Rate_2025.xlsx")
     part1_risk_free_rate = prepare_part1_risk_free_rate(risk_free_raw)
 
@@ -501,6 +697,7 @@ def main():
     print("Part I pipeline completed successfully.")
     print("Figure saved at:", figure_path)
     print("Exported files:")
+
     for name, path in exported_paths.items():
         print(f"  {name}: {path}")
 
@@ -515,7 +712,10 @@ def main():
 
     print("Filled Excel template saved at:", filled_template_path)
 
-    # Part II reuses the Part I objects and adds the carbon constraints.
+    # ------------------------------------------------------------------
+    # Part II pipeline
+    # ------------------------------------------------------------------
+
     part2_results = run_part2_pipeline(
         paths=paths,
         returns_matrix=returns_matrix,
@@ -530,6 +730,10 @@ def main():
         covariance_by_year=covariance_by_year,
     )
 
+    # ------------------------------------------------------------------
+    # Final combined Excel workbook
+    # ------------------------------------------------------------------
+
     from src.reporting_part2 import export_final_results_workbook
 
     final_workbook_path = export_final_results_workbook(
@@ -542,7 +746,9 @@ def main():
         excel_dir=paths["EXCEL_DIR"],
         figures_dir=paths["FIGURES_DIR"],
     )
+
     print("Final combined results workbook saved at:", final_workbook_path)
+    print("SAAM pipeline completed successfully.", flush=True)
 
 
 if __name__ == "__main__":
