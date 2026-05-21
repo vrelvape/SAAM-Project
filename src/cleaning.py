@@ -130,7 +130,7 @@ def prepare_carbon_data(carbon_raw, region_isins):
     # Sort chronologically
     carbon_data = carbon_data.sort_index(axis=1)
 
-    # Forward-fill annual values across time
+    # Carry forward the latest available annual carbon value
     carbon_data = carbon_data.ffill(axis=1)
 
     return carbon_data
