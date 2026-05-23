@@ -145,7 +145,7 @@ def compute_tracking_error_min_weights(cov_matrix, vw_weights, cf_per_unit, cf_t
 
     # Analytical gradient of the objective
     def objective_jac(w):
-        return (cov_matrix + cov_matrix.T) @ w
+        return (cov_matrix + cov_matrix.T) @ (w - vw_weights)
     constraints = [
         {
             "type": "eq",
