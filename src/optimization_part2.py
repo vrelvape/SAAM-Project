@@ -11,6 +11,47 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 
+def _make_feasible_start(base_weights, cf_per_unit, cf_target):
+    """
+    Build a feasible long-only starting point for SLSQP.
+
+    If the base portfolio already satisfies the carbon constraint, it is used.
+    Otherwise, it is blended with the lowest-carbon asset until the constraint
+    is satisfied.
+    """
+    base_weights = np.asarray(base_weights, dtype=float)
+    cf_per_unit = np.asarray(cf_per_unit, dtype=float)
+
+    base_weights = np.maximum(base_weights, 0)
+    if base_weights.sum() <= 0:
+        base_weights = np.ones_like(base_weights) / len(base_weights)
+    else:
+        base_weights = base_weights / base_weights.sum()
+
+    if not np.isfinite(cf_target):
+        return base_weights
+
+    base_cf = np.dot(base_weights, cf_per_unit)
+
+    if base_cf <= cf_target:
+        return base_weights
+
+    min_idx = np.nanargmin(cf_per_unit)
+    min_cf = cf_per_unit[min_idx]
+
+    if min_cf > cf_target:
+        return base_weights
+
+    low_carbon_weights = np.zeros_like(base_weights)
+    low_carbon_weights[min_idx] = 1.0
+
+    blend = (base_cf - cf_target) / (base_cf - min_cf)
+    blend = np.clip(blend, 0, 1)
+
+    feasible_weights = (1 - blend) * base_weights + blend * low_carbon_weights
+    feasible_weights = feasible_weights / feasible_weights.sum()
+
+    return feasible_weights
 
 # ---------------------------------------------------------------------------
 # Single-period optimizations
@@ -40,20 +81,34 @@ def compute_carbon_constrained_mv_weights(cov_matrix, cf_per_unit, cf_target):
     def objective(w):
         return w @ cov_matrix @ w
 
+    # Analytical gradient of the objective
+    def objective_jac(w):
+        return (cov_matrix + cov_matrix.T) @ w
+
     constraints = [
-        {"type": "eq",   "fun": lambda w: np.sum(w) - 1},
-        {"type": "ineq", "fun": lambda w: cf_target - np.dot(w, cf_per_unit)},
+        {
+            "type": "eq",
+            "fun": lambda w: np.sum(w) - 1,
+            "jac": lambda w: np.ones(n),
+        },
+        {
+            "type": "ineq",
+            "fun": lambda w: cf_target - np.dot(w, cf_per_unit),
+            "jac": lambda w: -cf_per_unit,
+        },
     ]
+
     bounds = [(0, 1)] * n
-    w0 = np.ones(n) / n
+    w0 = _make_feasible_start(np.ones(n) / n, cf_per_unit, cf_target)
 
     result = minimize(
         objective,
         w0,
+        jac=objective_jac,
         method="SLSQP",
         bounds=bounds,
         constraints=constraints,
-        options={"ftol": 1e-9, "maxiter": 1000},
+        options={"ftol": 1e-7, "maxiter": 300},
     )
 
     if not result.success:
@@ -88,20 +143,33 @@ def compute_tracking_error_min_weights(cov_matrix, vw_weights, cf_per_unit, cf_t
         diff = w - vw_weights
         return diff @ cov_matrix @ diff
 
+    # Analytical gradient of the objective
+    def objective_jac(w):
+        return (cov_matrix + cov_matrix.T) @ w
     constraints = [
-        {"type": "eq",   "fun": lambda w: np.sum(w) - 1},
-        {"type": "ineq", "fun": lambda w: cf_target - np.dot(w, cf_per_unit)},
+        {
+            "type": "eq",
+            "fun": lambda w: np.sum(w) - 1,
+            "jac": lambda w: np.ones(n),
+        },
+        {
+            "type": "ineq",
+            "fun": lambda w: cf_target - np.dot(w, cf_per_unit),
+            "jac": lambda w: -cf_per_unit,
+        },
     ]
+
     bounds = [(0, 1)] * n
-    w0 = vw_weights.copy()
+    w0 = _make_feasible_start(vw_weights, cf_per_unit, cf_target)
 
     result = minimize(
         objective,
         w0,
+        jac=objective_jac,
         method="SLSQP",
         bounds=bounds,
         constraints=constraints,
-        options={"ftol": 1e-9, "maxiter": 1000},
+        options={"ftol": 1e-7, "maxiter": 300},
     )
 
     if not result.success:
