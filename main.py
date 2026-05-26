@@ -142,9 +142,8 @@ def run_part2_pipeline(
         prepare_risk_free_rate,
     )
 
-    # ------------------------------------------------------------------
+
     # Load and prepare annual carbon inputs
-    # ------------------------------------------------------------------
 
     revenue_raw = pd.read_excel(paths["DATA_RAW"] / "DS_REV_Y_2025.xlsx")
     annual_caps_raw = pd.read_excel(paths["DATA_RAW"] / "DS_MV_T_USD_Y_2025.xlsx")
@@ -165,9 +164,8 @@ def run_part2_pipeline(
 
     print("Part II carbon inputs prepared.", flush=True)
 
-    # ------------------------------------------------------------------
+  
     # Baseline carbon metrics: MV and VW
-    # ------------------------------------------------------------------
 
     mv_waci_series, mv_cf_series = compute_carbon_metrics_timeseries(
         weights_by_year=mv_weights_by_year,
@@ -187,9 +185,7 @@ def run_part2_pipeline(
         rebalance_years=rebalance_years,
     )
 
-    # ------------------------------------------------------------------
-    # Section 3.2: MV portfolio with 50% carbon-footprint reduction
-    # ------------------------------------------------------------------
+    # Section 3.2 : Minimum Variance with 50% CF reduction
 
     carbon_mv_weights = compute_carbon_mv_weights_by_year(
         returns_matrix=returns_matrix,
@@ -220,11 +216,10 @@ def run_part2_pipeline(
         rebalance_years,
     )
 
-    print("Section 3.2 completed.", flush=True)
+    print("MV carbon-constrained portfolio completed.", flush=True)
 
-    # ------------------------------------------------------------------
-    # Section 3.3: tracking-error portfolio with 50% carbon reduction
-    # ------------------------------------------------------------------
+
+    # Section 3.3 : Tracking-Error Minimization with 50% CF reduction
 
     cf_target_50_vw = {
         year: CARBON_REDUCTION_TARGET * vw_cf_series.loc[year]
@@ -261,11 +256,10 @@ def run_part2_pipeline(
         rebalance_years,
     )
 
-    print("Section 3.3 completed.", flush=True)
+    print("Tracking-error constrained portfolio completed.", flush=True)
 
-    # ------------------------------------------------------------------
-    # Section 4: net-zero path with 10% yearly reduction
-    # ------------------------------------------------------------------
+  
+    # Section 4 : Net-Zero Trajectory Portfolio
 
     base_year_date = pd.Timestamp(f"{NET_ZERO_BASE_YEAR}-12-31")
     base_universe = universe_by_year[BACKTEST_START_YEAR]
@@ -312,11 +306,9 @@ def run_part2_pipeline(
         rebalance_years,
     )
 
-    print("Section 4 completed.", flush=True)
+    print("Net-zero portfolio construction completed.", flush=True)
 
-    # ------------------------------------------------------------------
     # Collect final return and carbon series
-    # ------------------------------------------------------------------
 
     all_returns = {
         "MV": mv_returns_oos,
@@ -349,9 +341,8 @@ def run_part2_pipeline(
 
     carbon_summary = build_carbon_metrics_table(waci_all, cf_all)
 
-    # ------------------------------------------------------------------
+
     # Figures used in the final report
-    # ------------------------------------------------------------------
 
     # Baseline carbon metrics: MV vs VW
     plot_carbon_metrics(
@@ -477,9 +468,7 @@ def run_part2_pipeline(
         show_plot=False,
     )
 
-    # ------------------------------------------------------------------
     # Tables and Excel exports
-    # ------------------------------------------------------------------
 
     exported_paths = export_part2_outputs(
         all_returns,
@@ -545,9 +534,8 @@ def main():
     print("Launching SAAM pipeline...", flush=True)
     print("Starting Part I pipeline...", flush=True)
 
-    # ------------------------------------------------------------------
     # Project paths
-    # ------------------------------------------------------------------
+
 
     paths = get_project_paths()
     ensure_project_directories(paths)
@@ -558,9 +546,8 @@ def main():
 
     print("Project paths ready.", flush=True)
 
-    # ------------------------------------------------------------------
+
     # Load raw data
-    # ------------------------------------------------------------------
 
     static, prices_raw, market_caps_raw, carbon_raw = load_raw_datasets(
         paths["DATA_RAW"]
@@ -572,9 +559,8 @@ def main():
     em_firms = static[static["Region"] == REGION].copy()
     em_isins = em_firms["ISIN"].tolist()
 
-    # ------------------------------------------------------------------
+
     # Clean and align data
-    # ------------------------------------------------------------------
 
     price_data = prepare_price_data(prices_raw, em_isins)
     price_data = apply_low_price_filter(price_data, LOW_PRICE_THRESHOLD)
@@ -584,18 +570,16 @@ def main():
 
     print("Datasets cleaned and aligned.", flush=True)
 
-    # ------------------------------------------------------------------
+   
     # Returns and delisting treatment
-    # ------------------------------------------------------------------
 
     returns_matrix = compute_returns(price_data)
     returns_matrix = apply_delisting_returns(price_data, returns_matrix)
 
     print("Returns matrix computed.", flush=True)
 
-    # ------------------------------------------------------------------
+
     # Dynamic universe
-    # ------------------------------------------------------------------
 
     rebalance_years = list(range(2014, 2026))
 
@@ -611,9 +595,7 @@ def main():
 
     print("Dynamic universe built.", flush=True)
 
-    # ------------------------------------------------------------------
     # Rolling covariance matrices
-    # ------------------------------------------------------------------
 
     covariance_by_year = build_covariance_by_year(
         returns_matrix=returns_matrix,
@@ -624,9 +606,8 @@ def main():
 
     print("Rolling covariance matrices built.", flush=True)
 
-    # ------------------------------------------------------------------
+
     # Part I portfolios
-    # ------------------------------------------------------------------
 
     mv_weights_by_year = compute_mv_weights_by_year(
         returns_matrix=returns_matrix,
@@ -651,9 +632,8 @@ def main():
 
     print("Backtests completed.", flush=True)
 
-    # ------------------------------------------------------------------
+
     # Part I reporting
-    # ------------------------------------------------------------------
 
     print("Loading reporting module...", flush=True)
 
@@ -712,9 +692,8 @@ def main():
 
     print("Filled Excel template saved at:", filled_template_path)
 
-    # ------------------------------------------------------------------
+
     # Part II pipeline
-    # ------------------------------------------------------------------
 
     part2_results = run_part2_pipeline(
         paths=paths,
@@ -730,9 +709,7 @@ def main():
         covariance_by_year=covariance_by_year,
     )
 
-    # ------------------------------------------------------------------
     # Final combined Excel workbook
-    # ------------------------------------------------------------------
 
     from src.reporting_part2 import export_final_results_workbook
 
