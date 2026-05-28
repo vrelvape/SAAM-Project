@@ -1,7 +1,7 @@
 # SAAM Project - Group N
 
-This repository contains our complete SAAM project for Group N, completed as
-part of the Systematic Asset Allocation and Management (SAAM) course at HEC
+This repository contains our complete project for Group N, completed as
+part of the Sustainability Aware Asset Management course at HEC
 Lausanne (2026).
 
 The project investigates whether carbon-aware portfolio construction can reduce
